@@ -1,0 +1,13 @@
+---
+# Connection Settings
+ansible_user: "" # Replace with your remote sudo user
+ansible_become: true
+# Directory settings
+maas_user: "{{ ansible_user }}"
+files_path: "/home/{{ maas_user }}/maas"
+
+# MAAS Admin Credentials
+admin_username: "admin"
+admin_email: ""
+admin_password: "P@ssw0rd"  # Default password; can be overridden
+

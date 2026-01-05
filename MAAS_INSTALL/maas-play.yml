@@ -1,0 +1,100 @@
+---
+- name: installing maas
+  hosts: maas-server
+  vars:
+    admin_password: 'init12'
+  tasks:
+  - name: creating the maas directory
+    file:
+      path: '{{ files_path }}'
+      state: directory
+      mode: '0755'
+      owner: "{{ ansible_user }}"
+      group: "{{ ansible_user }}"
+
+  - name: copying the files to the maas server
+    copy:
+      src: 'files/packages/packages.tar'
+      dest: '{{ files_path }}'
+      mode: 0644
+
+  - name: extracting the tar file
+    unarchive:
+      src: '/home/{{ maas_user }}/maas/packages.tar'
+      dest: '/home/{{ maas_user }}/maas'
+      remote_src: yes
+
+  - name: Ack and install snapd
+    become: yes
+    shell: |
+      cd {{ files_path }}
+      snap ack snapd_25577.assert
+      snap install snapd_25577.snap
+
+  - name: Ack and install core24
+    become: yes
+    shell: |
+      cd {{ files_path }}
+      snap ack core24_1225.assert
+      snap install core24_1225.snap
+
+  - name: Ack and install maas
+    become: yes
+    shell: |
+      cd {{ files_path }}
+      snap ack maas_40614.assert
+      snap install maas_40614.snap
+
+  - name: Install PostgreSQL packages
+    become: yes
+    shell: |
+      dpkg -i *.deb || true
+      apt-get install -f -y
+    args:
+      chdir: '{{ files_path }}/postgresql'
+
+  - name: Create MAAS PostgreSQL user
+    become: yes
+    shell: sudo -i -u postgres psql -c "CREATE USER \"maas\" WITH ENCRYPTED PASSWORD 'maaspass'"
+    register: create_user
+    failed_when: create_user.rc != 0 and 'already exists' not in create_user.stderr
+    changed_when: "'CREATE ROLE' in create_user.stdout"
+
+  - name: Create MAAS database
+    become: yes
+    shell: sudo -i -u postgres createdb -O "maas" "maas"
+    register: create_db
+    failed_when: create_db.rc != 0 and 'already exists' not in create_db.stderr
+    changed_when: create_db.rc == 0
+
+  - name: Add pg_hba.conf entry for MAAS
+    become: yes
+    lineinfile:
+      path: /etc/postgresql/16/main/pg_hba.conf
+      line: "host    maas    maas    0/0     md5"
+      insertafter: EOF
+
+  - name: Restart PostgreSQL
+    become: yes
+    systemd:
+      name: postgresql
+      state: restarted
+
+  - name: Initialize MAAS region+rack
+    become: yes
+    shell: |
+      maas init region+rack --database-uri "postgres://maas:maaspass@localhost/maas" --maas-url http://{{ ansible_default_ipv4.address }}:5240/MAAS
+    register: maas_init
+    failed_when: maas_init.rc != 0 and 'already been initialised' not in maas_init.stderr
+
+  - name: Create MAAS admin user
+    become: yes
+    shell: |
+      maas createadmin --username={{ admin_username}} --email={{ admin_email }} --password={{ admin_password | default('P@ssw0rd') }}
+  - name: Clean up MAAS installation files
+    file:
+      path: '{{ files_path }}'
+      state: absent
+  - name: MAAS installation complete
+    debug:
+      msg: "MAAS installation and initial configuration complete. Access MAAS at http://{{ ansible_default_ipv4.address }}:5240/MAAS with username '{{ admin_username }}'."
